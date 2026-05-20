@@ -1,0 +1,132 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>NYC出租车数据分析仪表板</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Microsoft YaHei', sans-serif; background: #f0f2f5; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { text-align: center; color: #333; margin-bottom: 10px; }
+        .subtitle { text-align: center; color: #666; margin-bottom: 30px; font-size: 14px; }
+        
+        .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 30px; }
+        .card { background: white; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .card h3 { color: #666; font-size: 14px; margin-bottom: 10px; }
+        .card .value { font-size: 32px; font-weight: bold; color: #1890ff; }
+        .card .unit { font-size: 14px; color: #999; }
+        
+        .charts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+        .chart-card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .chart-card h3 { margin-bottom: 15px; color: #333; font-size: 16px; border-left: 4px solid #1890ff; padding-left: 12px; }
+        .chart { width: 100%; height: 350px; }
+        
+        @media (max-width: 1000px) { .cards { grid-template-columns: repeat(2, 1fr); } .charts { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🚕 纽约出租车行程数据分析仪表板</h1>
+    <div class="subtitle">基于PySpark的NYC黄色出租车数据（2024年1-3月，955万行）</div>
+    
+    <div class="cards" id="cards">
+        <div class="card"><h3>📊 总行程数</h3><div class="value" id="total_trips">-</div></div>
+        <div class="card"><h3>💰 平均小费</h3><div class="value" id="avg_tip">-</div><span class="unit">美元</span></div>
+        <div class="card"><h3>💵 平均车费</h3><div class="value" id="avg_fare">-</div><span class="unit">美元</span></div>
+        <div class="card"><h3>📏 平均距离</h3><div class="value" id="avg_distance">-</div><span class="unit">英里</span></div>
+    </div>
+    
+    <div class="charts">
+        <div class="chart-card">
+            <h3>📈 24小时行程趋势与小费分布</h3>
+            <div id="hourChart" class="chart"></div>
+        </div>
+        <div class="chart-card">
+            <h3>📍 Top10 最热门上车区域</h3>
+            <div id="locationChart" class="chart"></div>
+        </div>
+        <div class="chart-card">
+            <h3>👥 不同乘客数的平均小费</h3>
+            <div id="passengerChart" class="chart"></div>
+        </div>
+        <div class="chart-card">
+            <h3>💎 小费与车费关系</h3>
+            <div id="scatterChart" class="chart"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    fetch('/data/summary_data.json')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('total_trips').innerText = (data.total_trips / 10000).toFixed(0) + '万';
+            document.getElementById('avg_tip').innerText = '$' + data.avg_tip.toFixed(2);
+            document.getElementById('avg_fare').innerText = '$' + data.avg_fare.toFixed(2);
+            document.getElementById('avg_distance').innerText = data.avg_distance.toFixed(1);
+        });
+    
+    fetch('/data/hour_data.json')
+        .then(r => r.json())
+        .then(data => {
+            const chart = echarts.init(document.getElementById('hourChart'));
+            chart.setOption({
+                tooltip: { trigger: 'axis' },
+                legend: { data: ['平均小费($)', '平均车费($)', '行程数(万)'] },
+                xAxis: { type: 'category', name: '小时', data: data.hours },
+                yAxis: [{ type: 'value', name: '金额($)' }, { type: 'value', name: '行程数(万)' }],
+                series: [
+                    { name: '平均小费($)', type: 'line', data: data.avg_tip, smooth: true, lineStyle: { color: '#ff6b6b', width: 2 } },
+                    { name: '平均车费($)', type: 'line', data: data.avg_fare, smooth: true, lineStyle: { color: '#4ecdc4', width: 2 } },
+                    { name: '行程数(万)', type: 'bar', yAxisIndex: 1, data: data.trip_count.map(v => (v/10000).toFixed(1)), itemStyle: { color: '#ffe66d', borderRadius: [4,4,0,0] } }
+                ]
+            });
+        });
+    
+    fetch('/data/location_data.json')
+        .then(r => r.json())
+        .then(data => {
+            const chart = echarts.init(document.getElementById('locationChart'));
+            chart.setOption({
+                tooltip: { trigger: 'axis' },
+                xAxis: { type: 'category', data: data.location_ids, name: '区域ID', axisLabel: { rotate: 45 } },
+                yAxis: { type: 'value', name: '行程数(万)' },
+                series: [{ type: 'bar', data: data.trip_counts.map(v => (v/10000).toFixed(1)), itemStyle: { color: '#1890ff', borderRadius: [4,4,0,0] }, label: { show: true, position: 'top' } }]
+            });
+        });
+    
+    fetch('/data/passenger_data.json')
+        .then(r => r.json())
+        .then(data => {
+            const chart = echarts.init(document.getElementById('passengerChart'));
+            const filtered = { counts: [], avg_tip: [] };
+            for(let i=0; i<data.counts.length; i++) {
+                if(data.counts[i] <= 6 || data.counts[i] === 0) {
+                    filtered.counts.push(data.counts[i]);
+                    filtered.avg_tip.push(data.avg_tip[i]);
+                }
+            }
+            chart.setOption({
+                tooltip: { trigger: 'axis' },
+                xAxis: { type: 'category', name: '乘客数', data: filtered.counts },
+                yAxis: { type: 'value', name: '平均小费($)' },
+                series: [{ type: 'bar', data: filtered.avg_tip, itemStyle: { color: '#52c41a', borderRadius: [4,4,0,0] }, label: { show: true, position: 'top' } }]
+            });
+        });
+    
+    fetch('/data/hour_data.json')
+        .then(r => r.json())
+        .then(data => {
+            const scatterData = data.hours.map((hour, i) => [data.avg_fare[i], data.avg_tip[i]]);
+            const chart = echarts.init(document.getElementById('scatterChart'));
+            chart.setOption({
+                tooltip: { formatter: (p) => `小时: ${data.hours[p.dataIndex]}时<br>平均车费: $${data.avg_fare[p.dataIndex]}<br>平均小费: $${data.avg_tip[p.dataIndex]}` },
+                xAxis: { type: 'value', name: '平均车费($)' },
+                yAxis: { type: 'value', name: '平均小费($)' },
+                series: [{ type: 'scatter', data: scatterData, symbolSize: 15, itemStyle: { color: '#fa8c16' }, label: { show: true, formatter: (p) => data.hours[p.dataIndex] + '时', position: 'right' } }]
+            });
+        });
+</script>
+</body>
+</html>
